@@ -211,7 +211,7 @@ class DTM:
             fpath = f"{dir}/time_slice_{t}.txt"
             with open(fpath, mode="w") as f:
                 for k in range(self.K):
-                    ranking_idx = np.argsort([-self.phi[t][v][k] for v in range(self.V)])
+                    ranking_idx = np.argsort([self.phi[t][v][k] for v in range(self.V)])
                     f.write(f"Topic {k}\n")
                     for v in range(self.V):
                         w = ranking_idx[v]
