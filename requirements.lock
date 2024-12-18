@@ -55,9 +55,10 @@ markdown-it-py==3.0.0
     # via rich
 marshmallow==3.21.3
     # via dataclasses-json
-matplotlib==3.9.1.post1
+matplotlib==3.10.0
     # via pythontemplate
     # via seaborn
+    # via utilpy
 mdurl==0.1.2
     # via markdown-it-py
 ml-dtypes==0.5.0
@@ -67,6 +68,8 @@ multipledispatch==1.0.0
     # via utilpy
 mypy-extensions==1.0.0
     # via typing-inspect
+networkx==3.4.2
+    # via utilpy
 numpy==2.0.1
     # via contourpy
     # via jax
@@ -88,9 +91,10 @@ packaging==24.1
     # via hydra-core
     # via marshmallow
     # via matplotlib
-pandas==2.2.2
+pandas==2.2.3
     # via pythontemplate
     # via seaborn
+    # via utilpy
 pillow==10.4.0
     # via matplotlib
 platformdirs==4.2.2
@@ -118,11 +122,12 @@ rich==13.9.4
     # via utilpy
 scikit-learn==1.5.1
     # via pythontemplate
-scipy==1.14.0
+scipy==1.14.1
     # via jax
     # via jaxlib
     # via scikit-learn
     # via tensorly
+    # via utilpy
 seaborn==0.13.2
     # via pythontemplate
 sentry-sdk==2.12.0
@@ -151,7 +156,7 @@ tzdata==2024.1
 urllib3==2.2.2
     # via requests
     # via sentry-sdk
-utilpy @ git+https://github.com/kaki005/PythonUtils.git@108c973180b02b9351c90d2908058372a3860a32
+utilpy @ git+https://github.com/kaki005/PythonUtils.git@18d9fc0a843969a87cb4fc6f33f76e726f79d658
     # via pythontemplate
 wandb==0.17.6
     # via pythontemplate

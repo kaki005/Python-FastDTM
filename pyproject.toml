@@ -1,7 +1,7 @@
 [project]
-name = "pythontemplate"
+name = "Pytho-FastDTM"
 version = "0.1.0"
-description = "My Python Template"
+description = "_unofficial implementation of Scaling up Dynamic Topic Model"
 authors = [{ name = "kaki005", email = "u097498f@ecs.osaka-u.ac.jp" }]
 dependencies = [
     "wandb>=0.17.6",
@@ -32,7 +32,7 @@ dev-dependencies = ["pre-commit>=3.8.0", "ruff>=0.8.0"]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pythontemplate"]
+packages = ["src/models"]
 
 
 [tool.ruff]

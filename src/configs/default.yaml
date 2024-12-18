@@ -1,15 +1,15 @@
 model:
-    name: "bert"
-    input_max_length: 32
-train:
-    lr: 1e-5
+    num_topic: 3
+    SGLD_a:  1.0
+    SGLD_b:  1.0
+    SGLD_c:  1.0
+    phi_var: 1.0
+    eta_var: 1.0
+    alpha_var: 1.0
+data:
     epochs: 10
-    batch_size: 16
-WandbConfig:
-    entity: "test"
-    project: "tutorial"
-    data_dir: "data/processed/"
-    output_dir: "results/bert/"
+    data_dir: "data/"
+    output_dir: "outputs/"
 
 
 hydra:

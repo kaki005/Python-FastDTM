@@ -1,1 +1,1 @@
-from .Config import Config, ModelConfig, TrainConfig, WandbConfig
+from .config import Config, DataConfig, ModelConfig

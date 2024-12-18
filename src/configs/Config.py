@@ -7,29 +7,33 @@ from dataclasses_json import dataclass_json
 @dataclass
 class ModelConfig:
     name: str = "bert"
-    input_max_length: int = 32
+    num_topic: int = 0
+    SGLD_a: float = 0.1
+    SGLD_b: float = 0.1
+    SGLD_c: float = 0.1
+    phi_var: float = 0.1
+    eta_var: float = 0.1
+    alpha_var: float = 0.1
 
 
 @dataclass_json
 @dataclass
-class TrainConfig:
-    lr: float = 1e-5
+class DataConfig:
     epochs: int = 10
-    batch_size: int = 16
+    data_dir: str = ""
+    output_dir: str = ""
 
 
-@dataclass_json
-@dataclass
-class WandbConfig:
-    entity: str = ""
-    project: str = ""
+# @dataclass_json
+# @dataclass
+# class WandbConfig:
+#     entity: str = ""
+#     project: str = ""
 
 
 @dataclass_json
 @dataclass
 class Config:
-    model_cfg: ModelConfig = field(default_factory=ModelConfig)
-    train_cfg: TrainConfig = field(default_factory=TrainConfig)
-    wandb: WandbConfig = field(default_factory=WandbConfig)
-    data_dir: str = ""
-    output_dir: str = ""
+    model: ModelConfig = field(default_factory=ModelConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    # wandb: WandbConfig = field(default_factory=WandbConfig)
