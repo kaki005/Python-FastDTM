@@ -13,40 +13,46 @@ from .alias_table import AliasTable
 class DTM:
     def __init__(self, data: list[list[list[int]]], dictionary: list[str], config: ModelConfig):
         self.W: list[list[list[int]]] = data
-        """data (time, num of document at t, num of word)"""
+        """data (time, document at t, wotd index)"""
         self.vocabulary: list[str] = dictionary
+        """list of word in data."""
+        self.logger: logging.Logger = logging.getLogger(str(__class__))
         self.K: int = config.num_topic
-        self.sgld_a: float = config.SGLD_a
-        self.sgld_b: float = config.SGLD_b
-        self.sgld_c: float = config.SGLD_c
-        self.dtm_phi_var: float = config.phi_var
-        self.dtm_eta_var: float = config.eta_var
-        self.dtm_alpha_var: float = config.alpha_var
         self.V: int = len(self.vocabulary)
         """num of words"""
         self.T: int = len(self.W)
         """num of time"""
         self.D = np.zeros(self.T, dtype=int)
         """num of document at each time (time, document)"""
+        self.sgld_a: float = config.SGLD_a
+        self.sgld_b: float = config.SGLD_b
+        self.sgld_c: float = config.SGLD_c
+        self.dtm_phi_var: float = config.phi_var
+        """variance of phi."""
+        self.dtm_eta_var: float = config.eta_var
+        """variance of eta."""
+        self.dtm_alpha_var: float = config.alpha_var
+        """variance of alpha."""
         self.Z = []
+        """topic assignment. (time, document at t, word)"""
         self.CDK = []
+        """counter. (time, num of documnt at t, topic)"""
         self.CWK = np.zeros((self.T, self.V, self.K), dtype=int)
-        """(time, word, topic)"""
+        """counter. (T, V, K)"""
         self.CK = np.zeros((self.T, self.K), dtype=int)
-        """(time, topic)"""
+        """counter.(time, topic)"""
         self.alpha = np.zeros((self.T, self.K), dtype=float)
-        """(time, topic)"""
+        """time evolving parameters topic latent strengh. (time, topic)"""
         self.phi = np.zeros((self.T, self.V, self.K), dtype=float)
-        """(time, word, topic)"""
+        """time evolving word strength for each topic. (time, word, topic)"""
         self.eta = []
-        """(time, num of document at t, topic)"""
-        self.logger: logging.Logger = logging.getLogger(str(__class__))
+        """topic latent strengh with uncertainity. (time, num of document at t, topic)"""
         self.term_alias_samples = np.zeros((self.T, self.V, self.K), dtype=int)
+        """buffer of random value created from alias table. (time, word, topic)"""
 
         for t in range(self.T):
             self.D[t] = len(self.W[t])
             self.eta.append(np.zeros((self.D[t], self.K)))
-
             self.CDK.append(np.zeros((self.D[t], self.K), dtype=int))
             self.Z.append([])
             for d in range(self.D[t]):
@@ -108,13 +114,15 @@ class DTM:
             for t in range(self.T):
                 xi_vec = np.ones(self.K) * xi
                 for d in range(self.D[t]):
-                    N = len(self.W[t][d])
-                    # estimate eta
+                    N = len(self.W[t][d])  # num of words at current doc
+                    # region (sample eta)
                     soft_eta = softmax(self.eta[t][d])
                     prior_eta = (self.alpha[t] - self.eta[t][d]) / self.dtm_eta_var
                     denom_eta = N * soft_eta
                     grad_eta = self.CDK[t][d].transpose() - denom_eta
-                    self.eta[t][d] += ((eps / 2) * (grad_eta + prior_eta)) + xi_vec
+                    self.eta[t][d] += (eps / 2) * (grad_eta + prior_eta) + xi_vec
+                    # endregion (sample eta)
+                    # region (sample topic)
                     for n in range(N):
                         for mh in range(4):
                             k = self.Z[t][d][n]
@@ -123,31 +131,30 @@ class DTM:
                             self.CWK[t][w][k] -= 1
                             self.CK[t][k] -= 1
 
-                            if mh % 2 == 0:
-                                # Z-proposal
-                                index = np.random.randint(0, N)
+                            if mh % 2 == 0:  # Z-proposal
+                                index = np.random.randint(0, N)  # sample random word
                                 proposal = self.Z[t][d][index]
                                 acceptance_prob = np.exp(self.phi[t][w, proposal]) / np.exp(self.phi[t][w, k])
                             else:
-                                if sample_indices[t][w] >= self.K:
-                                    self.term_alias_samples[t][w] = self.build_alias_table(t, w)
+                                if sample_indices[t][w] >= self.K:  # all sampled
+                                    self.term_alias_samples[t][w] = self.build_alias_table(t, w)  # rebuild alias table
                                     sample_indices[t][w] = 0
-                                proposal = self.term_alias_samples[t][w][sample_indices[t][w].item()]
+                                proposal = self.term_alias_samples[t][w][sample_indices[t][w].item()]  # sampletd topic
                                 sample_indices[t][w] += 1
                                 acceptance_prob = np.exp(self.eta[t][d][proposal]) / np.exp(self.eta[t][d][k])
-                            # acceptance_prob = 1.0 if acceptance_prob > 1.0 else acceptance_prob
-
-                            if np.random.uniform() >= acceptance_prob:
-                                # reject proposal
+                            acceptance_prob = 1.0 if acceptance_prob > 1.0 else acceptance_prob
+                            # metropolis hasting test.
+                            if np.random.uniform() >= acceptance_prob:  # reject proposal
                                 proposal = k
-                                self.Z[t][d][n] = k
-                                self.CDK[t][d][n] += 1
-                                self.CWK[t][w][k] += 1
-                                self.CK[t][k] += 1
+                            self.Z[t][d][n] = proposal
+                            self.CDK[t][d][n] += 1
+                            self.CWK[t][w][proposal] += 1
+                            self.CK[t][proposal] += 1
+                    # endregion (sample eta)
 
+                # region (sample phi)
                 xi_vec = np.ones(self.V) * xi
                 for k in range(self.K):
-                    # sample phi
                     soft_phi = softmax(self.phi[t][:, k])  # TODO これでよい？
                     prior_phi = np.zeros(self.V)
                     if t == 0:
@@ -161,14 +168,13 @@ class DTM:
                             self.phi[t + 1][:, k] + self.phi[t - 1][:, k] - 2 * self.phi[t][:, k]
                         ) / self.dtm_phi_var
 
-                    denom_phi = self.CK[t][k] * soft_phi
-                    grad_phi = self.CWK[t][:, k] - denom_phi
-                    self.phi[t][:, k] += ((eps / 2) * (grad_phi + prior_phi)) + xi_vec
-
-                # sample alpha
+                    denom_phi = self.CK[t][k] * soft_phi  # (14)
+                    grad_phi = self.CWK[t][:, k] - denom_phi  # (14)
+                    self.phi[t][:, k] += ((eps / 2) * (grad_phi + prior_phi)) + xi_vec  # (14)
+                # endregion (sample eta)
+                # region (sample alpha)
                 alpha_bar = np.zeros(self.K)
                 alpha_precision = 0.0  # designed to be a diagonal matrix
-                cov = np.eye(self.K)
                 if t == 0:
                     alpha_precision = (1.0 / 100) + (1 / self.dtm_alpha_var)
                     alpha_sigma = 1.0 / alpha_precision
@@ -178,13 +184,19 @@ class DTM:
                     alpha_precision = 1.0 / self.dtm_alpha_var
                 else:
                     alpha_precision = 2 / self.dtm_alpha_var
-                    alpha_bar = (self.alpha[t + 1] - self.alpha[t - 1]) / 2
-                    eta_bar = self.eta[t].sum(axis=1)
-                    sigma = 1.0 / (1.0 / alpha_precision + (self.D[t] / self.dtm_eta_var))
-                    cov *= sigma
-                    mean = (alpha_bar / alpha_precision + (eta_bar / self.dtm_eta_var)) * sigma
-                    self.alpha[t] = np.random.multivariate_normal(mean, cov)
+                    alpha_bar = (self.alpha[t + 1] - self.alpha[t - 1]) / 2  # (5)
+                eta_bar = self.eta[t].sum(axis=0)  # (5)
+                sigma_inv = 1.0 / (alpha_precision + (self.D[t] / self.dtm_eta_var))  # (5)
+                cov = np.eye(self.K) * sigma_inv  # (5)
+                # MEMO: 本実装に誤りがあったため修正
+                mean = (
+                    alpha_bar
+                    + eta_bar
+                    - (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var) * sigma_inv
+                )  # (4)
+                self.alpha[t] = np.random.multivariate_normal(mean, cov)  # sample
                 self.diagnosis(t)
+            # endregion (sample alpha)
 
     def diagnosis(self, t: int):
         N = 0
