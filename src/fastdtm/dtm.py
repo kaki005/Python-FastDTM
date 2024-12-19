@@ -156,7 +156,7 @@ class DTM:
                             self.CDK[t][d][proposal] += 1
                             self.CWK[t][w][proposal] += 1
                             self.CK[t][proposal] += 1
-                    # endregion (sample eta)
+                    # endregion (sample topic)
 
                 # region (sample phi)
                 xi_vec = np.ones(self.V) * np.random.normal(0.0, eps)
@@ -175,7 +175,7 @@ class DTM:
                     denom_phi = self.CK[t][k] * softmax(self.phi[t][:, k])  # (14) # TODO これでよい？
                     grad_phi = self.CWK[t][:, k] - denom_phi  # (14)
                     self.phi[t][:, k] += (eps / 2) * (grad_phi + prior_phi) + xi_vec  # (14)
-                # endregion (sample eta)
+                # endregion (sample phi)
                 # region (sample alpha)
                 alpha_bar = np.zeros(self.K)
                 alpha_precision = 0.0  # designed to be a diagonal matrix
@@ -197,8 +197,8 @@ class DTM:
                     alpha_bar + eta_bar - cov @ (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var)
                 )  # (4)
                 self.alpha[t] = np.random.multivariate_normal(mean, cov)  # sample
+                # endregion (sample alpha)
                 self.diagnosis(t)
-            # endregion (sample alpha)
 
     def diagnosis(self, t: int):
         N = 0

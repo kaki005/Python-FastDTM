@@ -16,6 +16,9 @@ dependencies = [
     "tensorly>=0.8.1",
     "utilpy @ git+https://github.com/kaki005/PythonUtils.git",
     "rich>=13.9.4",
+    "jax>=0.4.38",
+    "equinox>=0.11.10",
+    "jaxtyping>=0.2.36",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
@@ -61,6 +64,7 @@ ignore = [
     "F401",  # imported but not used
     "UP008",
     "B007",
+    "F722",  # for jaxtyping
 ]
 logger-objects = ["logging.Logger"]
 

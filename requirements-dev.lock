@@ -32,7 +32,8 @@ distlib==0.3.8
     # via virtualenv
 docker-pycreds==0.4.0
     # via wandb
-equinox==0.11.9
+equinox==0.11.10
+    # via pytho-fastdtm
     # via utilpy
 filelock==3.15.4
     # via virtualenv
@@ -48,13 +49,15 @@ identify==2.6.0
     # via pre-commit
 idna==3.7
     # via requests
-jax==0.4.35
+jax==0.4.38
     # via equinox
+    # via pytho-fastdtm
     # via utilpy
-jaxlib==0.4.35
+jaxlib==0.4.38
     # via jax
 jaxtyping==0.2.36
     # via equinox
+    # via pytho-fastdtm
 joblib==1.4.2
     # via scikit-learn
 kiwisolver==1.4.5
