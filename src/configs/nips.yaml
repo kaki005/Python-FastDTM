@@ -1,5 +1,5 @@
 model:
-    num_topic: 3
+    num_topic: 10
     SGLD_a:  1.0
     SGLD_b:  1.0
     SGLD_c:  1.0
@@ -7,7 +7,7 @@ model:
     eta_var: 1.0
     alpha_var: 1.0
 data:
-    epochs: 10
+    epochs: 50
     data_dir: "data/"
     output_dir: "outputs/"
 

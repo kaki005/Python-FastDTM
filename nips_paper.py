@@ -14,7 +14,7 @@ def main(cfg: Config):
     log_init()
     logger = logging.getLogger("main")
     with open("data/vocabulary.txt") as f:
-        vocabulary = f.readlines()
+        vocabulary = [line.replace("\n", "") for line in f.readlines()]
     docs = []
     with open("data/nips.conf") as f:
         years = [line.replace("\n", "") for line in f.readlines()]

@@ -1,4 +1,5 @@
 import logging
+import sys
 
 import numpy as np
 from matplotlib.pylab import f
@@ -53,7 +54,7 @@ class DTM:
         self.phi = np.zeros((self.T, self.V, self.K), dtype=float)
         """time evolving word strength for each topic. (time, word, topic)"""
         self.eta = []
-        """topic latent strengh with uncertainity. (time, num of document at t, topic)"""
+        """topic strengh with uncertainity. (time, num of document at t, topic)"""
         self.term_alias_samples = np.zeros((self.T, self.V, self.K), dtype=int)
         """buffer of random value created from alias table. (time, word, topic)"""
 
@@ -117,18 +118,15 @@ class DTM:
         for iter in range(num_iters):
             self.logger.info(f"iter: {iter}")
             eps = self.sgld_a * pow(self.sgld_b + iter, -self.sgld_c)
-            xi = np.random.normal(0.0, eps)
             mean = np.zeros(self.K)
             for t in range(self.T):
-                xi_vec = np.ones(self.K) * xi
+                xi_vec = np.ones(self.K) * np.random.normal(0.0, eps)
                 for d in range(self.D[t]):
                     N = len(self.W[t][d])  # num of words at current doc
                     # region (sample eta)
-                    soft_eta = softmax(self.eta[t][d])
                     prior_eta = (self.alpha[t] - self.eta[t][d]) / self.dtm_eta_var
-                    denom_eta = N * soft_eta
-                    grad_eta = self.CDK[t][d].transpose() - denom_eta
-                    self.eta[t][d] += (eps / 2) * (grad_eta + prior_eta) + xi_vec
+                    grad_eta = self.CDK[t][d] - N * softmax(self.eta[t][d])  # (10)
+                    self.eta[t][d] += (eps / 2) * (grad_eta + prior_eta) + xi_vec  # (10)
                     # endregion (sample eta)
                     # region (sample topic)
                     for n in range(N):
@@ -150,7 +148,7 @@ class DTM:
                                 proposal = self.term_alias_samples[t][w][sample_indices[t][w].item()]  # sampletd topic
                                 sample_indices[t][w] += 1
                                 acceptance_prob = np_exp(self.eta[t][d][proposal]) / np_exp(self.eta[t][d][k])
-                            # acceptance_prob = 1.0 if acceptance_prob > 1.0 else acceptance_prob
+                            acceptance_prob = 1.0 if acceptance_prob > 1.0 else acceptance_prob
                             # metropolis hasting test.
                             if np.random.uniform() >= acceptance_prob:  # reject proposal
                                 proposal = k  # ramain old topic
@@ -161,10 +159,8 @@ class DTM:
                     # endregion (sample eta)
 
                 # region (sample phi)
-                xi_vec = np.ones(self.V) * xi
+                xi_vec = np.ones(self.V) * np.random.normal(0.0, eps)
                 for k in range(self.K):
-                    soft_phi = softmax(self.phi[t][:, k])  # TODO これでよい？
-                    prior_phi = np.zeros(self.V)
                     if t == 0:
                         phi_sigma = 1.0 / ((1.0 / 100) + (1 / self.dtm_phi_var))
                         prior_phi = self.phi[t + 1][:, k] * (phi_sigma / self.dtm_phi_var)
@@ -176,9 +172,9 @@ class DTM:
                             self.phi[t + 1][:, k] + self.phi[t - 1][:, k] - 2 * self.phi[t][:, k]
                         ) / self.dtm_phi_var
 
-                    denom_phi = self.CK[t][k] * soft_phi  # (14)
+                    denom_phi = self.CK[t][k] * softmax(self.phi[t][:, k])  # (14) # TODO これでよい？
                     grad_phi = self.CWK[t][:, k] - denom_phi  # (14)
-                    self.phi[t][:, k] += ((eps / 2) * (grad_phi + prior_phi)) + xi_vec  # (14)
+                    self.phi[t][:, k] += (eps / 2) * (grad_phi + prior_phi) + xi_vec  # (14)
                 # endregion (sample eta)
                 # region (sample alpha)
                 alpha_bar = np.zeros(self.K)
@@ -192,15 +188,13 @@ class DTM:
                     alpha_precision = 1.0 / self.dtm_alpha_var
                 else:
                     alpha_precision = 2 / self.dtm_alpha_var
-                    alpha_bar = (self.alpha[t + 1] - self.alpha[t - 1]) / 2  # (5)
+                    alpha_bar = (self.alpha[t + 1] + self.alpha[t - 1]) / 2  # (5)
                 eta_bar = self.eta[t].mean(axis=0)  # (5)
-                sigma_inv = 1.0 / (alpha_precision + (self.D[t] / self.dtm_eta_var))  # (5)
+                sigma_inv = 1.0 / (alpha_precision + self.D[t] / self.dtm_eta_var)  # (5)
                 cov = np.eye(self.K) * sigma_inv  # (5)
                 # MEMO: 本実装に誤りがあったため修正
                 mean = (
-                    alpha_bar
-                    + eta_bar
-                    - sigma_inv @ (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var)
+                    alpha_bar + eta_bar - cov @ (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var)
                 )  # (4)
                 self.alpha[t] = np.random.multivariate_normal(mean, cov)  # sample
                 self.diagnosis(t)
@@ -210,20 +204,19 @@ class DTM:
         N = 0
         total_log_likelihood = 0.0
         softmax_phi = np.zeros((self.K, self.V))
-        softmax_eta = np.zeros((self.D[t], self.K))
         for k in range(self.K):
             softmax_phi[k] = softmax(self.phi[t][:, k])
         for d in range(self.D[t]):
             N += len(self.W[t][d])
-            softmax_eta[d] = softmax(self.eta[t][d])
-            for n in range(len(self.W[t][d])):
-                likelihood = 0.0
-                w = self.W[t][d][n]
-                for k in range(self.K):
-                    likelihood += softmax_eta[d] @ softmax_phi[:, w]
-                    if likelihood <= 0:
-                        self.logger.error("Likelihood less than 0, error")
-                total_log_likelihood += np.log(likelihood)
+            softmax_eta = softmax(self.eta[t][d])  # 時刻t文書dのsoftmax
+            for n in range(len(self.W[t][d])):  # for each word in document d
+                likelihood = softmax_eta @ softmax_phi[:, self.W[t][d][n]]
+                if likelihood <= 0:
+                    # self.logger.error(f"Likelihood less than 0, error : {likelihood}")
+                    total_log_likelihood += -100000000
+                    # sys.exit()
+                else:
+                    total_log_likelihood += np.log(likelihood)
         self.logger.info(f"perplexity at time {t+1} : {np_exp(-total_log_likelihood / N)}")
 
     def save_data(self, dir: str):
@@ -233,6 +226,6 @@ class DTM:
                 for k in range(self.K):
                     ranking_idx = np.argsort([self.phi[t][v][k] for v in range(self.V)])
                     f.write(f"Topic {k}\n")
-                    for v in range(self.V):
+                    for v in range(np.min(self.V, 30)):
                         w = ranking_idx[v]
                         f.write(f"({self.vocabulary[w]}, {self.phi[t][w][k]})\n")
