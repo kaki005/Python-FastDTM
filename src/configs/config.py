@@ -20,7 +20,7 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     epochs: int = 10
-    data_dir: str = ""
+    # data_dir: str = ""
     output_dir: str = ""
 
 

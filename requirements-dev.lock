@@ -27,7 +27,7 @@ contourpy==1.2.1
 cycler==0.12.1
     # via matplotlib
 dataclasses-json==0.6.7
-    # via pythontemplate
+    # via pytho-fastdtm
 distlib==0.3.8
     # via virtualenv
 docker-pycreds==0.4.0
@@ -43,7 +43,7 @@ gitdb==4.0.11
 gitpython==3.1.43
     # via wandb
 hydra-core==1.3.2
-    # via pythontemplate
+    # via pytho-fastdtm
 identify==2.6.0
     # via pre-commit
 idna==3.7
@@ -64,7 +64,7 @@ markdown-it-py==3.0.0
 marshmallow==3.21.3
     # via dataclasses-json
 matplotlib==3.10.0
-    # via pythontemplate
+    # via pytho-fastdtm
     # via seaborn
     # via utilpy
 mdurl==0.1.2
@@ -87,14 +87,14 @@ numpy==2.0.1
     # via matplotlib
     # via ml-dtypes
     # via pandas
-    # via pythontemplate
+    # via pytho-fastdtm
     # via scikit-learn
     # via scipy
     # via seaborn
     # via tensorly
 omegaconf==2.3.0
     # via hydra-core
-    # via pythontemplate
+    # via pytho-fastdtm
 opt-einsum==3.4.0
     # via jax
 packaging==24.1
@@ -102,7 +102,7 @@ packaging==24.1
     # via marshmallow
     # via matplotlib
 pandas==2.2.3
-    # via pythontemplate
+    # via pytho-fastdtm
     # via seaborn
     # via utilpy
 pillow==10.4.0
@@ -131,11 +131,11 @@ pyyaml==6.0.2
 requests==2.32.3
     # via wandb
 rich==13.9.4
-    # via pythontemplate
+    # via pytho-fastdtm
     # via utilpy
 ruff==0.8.0
 scikit-learn==1.5.1
-    # via pythontemplate
+    # via pytho-fastdtm
 scipy==1.14.1
     # via jax
     # via jaxlib
@@ -143,7 +143,7 @@ scipy==1.14.1
     # via tensorly
     # via utilpy
 seaborn==0.13.2
-    # via pythontemplate
+    # via pytho-fastdtm
 sentry-sdk==2.12.0
     # via wandb
 setproctitle==1.3.3
@@ -156,7 +156,7 @@ six==1.16.0
 smmap==5.0.1
     # via gitdb
 tensorly==0.8.1
-    # via pythontemplate
+    # via pytho-fastdtm
 threadpoolctl==3.5.0
     # via scikit-learn
 typing-extensions==4.12.2
@@ -171,8 +171,8 @@ urllib3==2.2.2
     # via requests
     # via sentry-sdk
 utilpy @ git+https://github.com/kaki005/PythonUtils.git@18d9fc0a843969a87cb4fc6f33f76e726f79d658
-    # via pythontemplate
+    # via pytho-fastdtm
 virtualenv==20.26.3
     # via pre-commit
 wandb==0.17.6
-    # via pythontemplate
+    # via pytho-fastdtm

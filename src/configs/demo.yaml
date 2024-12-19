@@ -1,0 +1,19 @@
+model:
+    num_topic: 3
+    SGLD_a:  1.0
+    SGLD_b:  1.0
+    SGLD_c:  1.0
+    phi_var: 1.0
+    eta_var: 1.0
+    alpha_var: 1.0
+data:
+    epochs: 100
+    data_dir: "data/"
+    output_dir: "outputs/"
+
+
+hydra:
+    output_subdir: null                         # .hydra 以下ファイルの生成停止
+defaults:
+    - override hydra/hydra_logging: disabled  # .hydra 以下ファイルの生成停止
+    - override hydra/job_logging: disabled      # ログ出力・記録停止

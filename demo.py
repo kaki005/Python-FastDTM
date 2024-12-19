@@ -5,11 +5,11 @@ import omegaconf
 import wandb
 from utilpy import log_init
 
-from configs import Config
-from fastdtm import DTM
+from src.configs import Config
+from src.fastdtm import DTM
 
 
-@hydra.main(version_base=None, config_path="configs/", config_name="default")
+@hydra.main(version_base=None, config_path="src/configs/", config_name="demo")
 def main(cfg: Config):
     log_init()
     logger = logging.getLogger("main")
