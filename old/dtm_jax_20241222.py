@@ -1,3 +1,4 @@
+import itertools
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ import jax.numpy as jnp
 from jax import random
 from jax.nn import softmax
 from jaxtyping import Array, Float, Int, PRNGKeyArray, Scalar
+
+from src.configs.config import ModelConfig
 
 ZERO = 1e-6
 
@@ -40,13 +43,8 @@ class DTMState(NamedTuple):
 
 
 class DTMJax(eqx.Module):
-    # ===========================
-    # region (property)
-    # ===========================
-    W: list[list[Float[Array, "N_dt"]]] = eqx.field(static=True)
+    W: list[list[Float[Array, "word_num"]]] = eqx.field(static=True)
     """data (time, document at t, wotd index)"""
-    Ns: list[Float[Array, "D_t"]]
-    """num of words for each document. (time, document)"""
     vocabulary: list[str] = eqx.field(static=True)
     """list of word in data."""
     logger: logging.Logger = eqx.field(static=True)
@@ -58,6 +56,8 @@ class DTMJax(eqx.Module):
     """num of time"""
     D: jnp.ndarray = eqx.field(static=True)
     """num of document at each time (time, document)"""
+    word_nums: list[Float[Array, "doc_num_t"]]
+    """num of words for each document. (time, document)"""
     sgld_a: float = eqx.field(static=True)
     sgld_b: float = eqx.field(static=True)
     sgld_c: float = eqx.field(static=True)
@@ -68,16 +68,11 @@ class DTMJax(eqx.Module):
     dtm_alpha_var: float = eqx.field(static=True)
     """variance of alpha."""
     index: eqx.nn.StateIndex
-    # endregion (property)
 
-    # ===========================
-    # region (コンストラクタ,初期化)
-    # ===========================
-
-    def __init__(self, W, dictionary, config):
-        self.W = [([jnp.array(w_td) for w_td in w_t]) for w_t in W]
-        self.Ns = [jnp.array([len(w_td) for w_td in w_t]) for w_t in W]
-        self.vocabulary = dictionary
+    def __init__(self, W, vocabulary, config: ModelConfig):
+        self.W = [[jnp.array(wtd) for wtd in w_t] for w_t in W]
+        self.word_nums = [jnp.array([len(w_td) for w_td in w_t]) for w_t in W]
+        self.vocabulary = vocabulary
         self.logger = logging.getLogger(str(__class__))
         self.K = config.num_topic
         self.V = len(self.vocabulary)
@@ -144,107 +139,73 @@ class DTMJax(eqx.Module):
         new_state = model_state.set(self.index, DTMState(Z, CDK, CWK, CK, alpha, phi, eta, key))
         return new_state
 
-    # endregion(コンストラクタ,初期化)
-
-    # ===========================
-    # region (メソッド)
-    # ===========================
     def estimate(self, model_state: eqx.nn.State, num_iters: int) -> eqx.nn.State:
         Z, CDK, CWK, CK, alpha, phi, eta, key = model_state.get(self.index)
 
         # @eqx.filter_jit
-        # @eqx.filter_vmap(in_axes=[None, 0, None, 0, None])
-        def _sample_eta(
-            t: int,
-            d: int,
-            N: int,
-            eps: float,
-            eta_td: Float[Array, "K"],
-            CDK_td: Float[Array, "K"],
-            alpha_t: Float[Array, "K"],
-        ):
-            xi_vec = jnp.ones(self.K) * random.normal(key, (1,)) * eps
-            prior_eta = (alpha_t - eta_td) / self.dtm_eta_var
-            grad_eta = CDK_td - N * softmax(eta_td)  # (10)
-            eta_td += (eps / 2) * (grad_eta + prior_eta) + xi_vec  # (10)
-            return eta_td
+        # @eqx.filter_vmap(in_axes=[None, 0, 0, 0, 0, 0, 0, 0, 0])
+        def _sample_doc_loop(carry_doc, params):
+            t, key, CDK_t, CWK, CK, eta_t, phi_t, Z_t = carry_doc
+            d, N = params
+            key, subkey = random.split(key)
+            xi_vec = jnp.ones(self.K) * random.normal(subkey, (1,)) * eps
+            # sample eta
+            prior_eta = (alpha[t] - eta_t) / self.dtm_eta_var
+            grad_eta = CDK_t - N * softmax(eta_t)  # (10)
+            eta_t += eps / 2 * (prior_eta + grad_eta) + xi_vec  # (10)
+            # sample topi
+            carry = (key, CDK_t, CWK, CK, 0)
 
-        # @eqx.filter_vmap(in_axes=[None, 0, 0, 0, 0, 0, None])
-        def _sample_topic(
-            N: int,
-            w: Int[Scalar, "1"],
-            key: PRNGKeyArray,
-            eta_td: Float[Array, "K"],
-            # CDK_td: Float[Array, "K"],
-            Z_td: Int[Scalar, "1"],
-            phi: Float[Array, "V K"],
-            Z_t: Int[Array, "N_td"],
-        ):
-            def _mh_test_word(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"]):
-                key, subkey = random.split(key)
-                # index = random.randint(subkey, (1,), 0, N).squeeze()  # sample random word
-                # proposal = Z_t[index]  # その単語のトピック
-                proposal = random.randint(subkey, (1,), 0, self.K - 1).squeeze()  # sample random toipc
-                acceptance_prob = jax_exp(phi[w, proposal]) / jax_exp(phi[w, pre_topic])
-                return proposal, acceptance_prob, key
+            def _sample_topic_word(carry, param):
+                key, CDK_td, CWK, CK, word_index = carry
+                pre_topic = param
+                w = self.W[t][d][word_index]
 
-            def _mh_test_topic(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"]):
-                key, subkey = random.split(key)
-                proposal = random.randint(subkey, (1,), 0, self.K - 1).squeeze()  # sample random toipc
-                acceptance_prob = jax_exp(eta_td[proposal]) / jax_exp(eta_td[pre_topic])
-                return proposal, acceptance_prob, key
+                def _mh_test_word(key: PRNGKeyArray, pre_topic: int):
+                    key, subkey = random.split(key)
+                    index = random.randint(subkey, (1,), 0, N).squeeze()  # sample random word
+                    proposal = Z_t[index]
+                    acceptance_prob = jax_exp(phi_t[w, proposal]) / jax_exp(phi_t[w, pre_topic])
+                    return proposal, acceptance_prob, key
 
-            def _sample(key: PRNGKeyArray, is_mh_word: bool, pre_topic: Int[Scalar, "1"]):
-                # metropolis hasting test.
-                # CDK_td = CDK_td[pre_topic].subtract(1)
-                proposal, acceptance_prob, key = jax.lax.cond(is_mh_word, _mh_test_word, _mh_test_topic, key, pre_topic)
-                key, subkey = random.split(key)
-                is_rejected = random.uniform(subkey) >= acceptance_prob
-                new_topic = is_rejected * pre_topic + (1 - is_rejected) * proposal
-                # CDK_td = CDK_td[new_topic].add(1)
-                return new_topic
+                def _mh_test_topic(key: PRNGKeyArray, pre_topic: int):
+                    key, subkey = random.split(key)
+                    proposal = random.randint(subkey, (1,), 0, self.K - 1).squeeze()  # sample random word
+                    acceptance_prob = jax_exp(eta[proposal]) / jax_exp(eta[pre_topic])
+                    return proposal, acceptance_prob, key
 
-            keys = random.split(key, 3)
-            new_topic = _sample(keys[0], True, Z_td)
-            new_topic = _sample(keys[1], False, new_topic)
-            return new_topic
+                def _sample(key: PRNGKeyArray, is_mh_word: bool, pre_topic: int, CDK_td, CWK, CK):
+                    # metropolis hasting test.
+                    CDK_td = CDK_td[pre_topic].subtract(1)
+                    CWK = CWK.at[t, w, pre_topic].subtract(1)
+                    CK = CK.at[t, pre_topic].subtract(1)
+                    proposal, acceptance_prob, key = jax.lax.cond(is_mh_word, _mh_test_word, _mh_test_topic, key)
+                    key, subkey = random.split(key)
+                    is_rejected = random.uniform(subkey) >= acceptance_prob
+                    new_topic = is_rejected * pre_topic + (1 - is_rejected) * proposal
+                    CDK_td = CDK_td[new_topic].add(1)
+                    CWK = CWK.at[t, w, new_topic].add(1)
+                    CK = CK.at[t, new_topic].add(1)
+                    return CDK_td, new_topic, CWK, CK
 
-        def _update_counter(t: int, d: int, CWK, CK, CDK_t, new_topic, old_topic):
-            N = self.Ns[t][d]
-            for n in range(N):
-                w = self.W[t][d][n]
-                old_k = old_topic[n]
-                CWK = CWK.at[t, w, old_k].subtract(1)
-                CK = CK.at[t, old_k].subtract(1)
-                CDK_t = CDK_t.at[d, old_k].subtract(1)
-                new_k = new_topic[n]
-                CWK = CWK.at[t, w, new_k].add(1)
-                CK = CK.at[t, new_k].add(1)
-                CDK_t = CDK_t.at[d, new_k].add(1)
-            return CWK, CK, CDK_t
+                keys = random.split(key, 3)
+                CDK_td, new_topic, CWK, CK = _sample(keys[0], True, CDK_td, pre_topic, CWK, CK)
+                CDK_td, new_topic, CWK, CK = _sample(keys[1], False, CDK_td, new_topic, CWK, CK)
+                return (keys[2], CDK_td, CWK, CK, word_index + 1), new_topic
+
+            (key, CDK_t, CWK, CK, _), Z_t[d] = jax.lax.scan(_sample_topic_word, carry, Z_t[d])
+            return (t, key, CDK_t, CWK, CK, eta_t, phi_t, Z_t), None
 
         for i in range(num_iters):
-            eps = self.sgld_a * jnp.pow(self.sgld_b + i, -self.sgld_c).squeeze()
+            eps = self.sgld_a * jnp.pow(self.sgld_b + i, -self.sgld_c)
             for t in range(self.T):
-                # region (sample eta)
-                eta[t] = jax.vmap(_sample_eta, in_axes=[None, 0, 0, None, 0, 0, None])(
-                    t, jnp.arange(self.D[t]), self.Ns[t], eps, eta[t], CDK[t], alpha[t]
-                )
-                # endregion (sample eta)
-
                 # region (sample eta, topic)
-                for d in range(self.D[t]):
-                    subkey, key = random.split(key)
-                    N = self.Ns[t][d]
-                    keys = random.split(subkey, N)
-                    new_topics = jax.vmap(_sample_topic, in_axes=[None, 0, 0, None, 0, None, None])(
-                        N, self.W[t][d], keys, eta[t][d], Z[t][d], phi[t], Z[t]
-                    )
-                    CWK, CK, CDK[t] = _update_counter(t, d, CWK[t], CK[t], CDK[t], new_topics, Z[t])
+                carry = (t, key, CDK[t], CWK[t], CK[t], eta[t], phi[t], Z[t])
+                params = (jnp.arange(self.D[t]), self.word_nums[t])
+                (_, key, CDK[t], CWK[t], CK[t], eta[t], phi[t], Z[t]), _ = jax.lax.scan(_sample_doc_loop, carry, params)
                 # endregion (sample eta, topic)
 
             # region (sample phi)
-            carry = (key, phi, eps)
 
             def _sample_phi_loop(carry, param):
                 key, phi, eps = carry
@@ -273,6 +234,7 @@ class DTMJax(eqx.Module):
                 phi = _sample_phi_vmap(phi, cwk_t, ck_t)
                 return (key, jnp.transpose(phi, (1, 2, 0)), eps), None
 
+            carry = (key, phi, eps)
             (key, phi, _), _ = jax.lax.scan(_sample_phi_loop, carry, (jnp.arange(self.T), CWK, CK))
 
             # endregion (sample phi)
@@ -317,5 +279,3 @@ class DTMJax(eqx.Module):
 
         new_state = model_state.set(self.index, DTMState(Z, CDK, CWK, CK, alpha, phi, eta, key))
         return new_state
-
-    # endregion(メソッド)
