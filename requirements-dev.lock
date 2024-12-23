@@ -90,6 +90,7 @@ numpy==2.0.1
     # via matplotlib
     # via ml-dtypes
     # via pandas
+    # via polyagamma
     # via pytho-fastdtm
     # via scikit-learn
     # via scipy
@@ -113,6 +114,8 @@ pillow==10.4.0
 platformdirs==4.2.2
     # via virtualenv
     # via wandb
+polyagamma==2.0.1
+    # via pytho-fastdtm
 pre-commit==3.8.0
 protobuf==5.27.3
     # via wandb

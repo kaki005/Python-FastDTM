@@ -80,6 +80,7 @@ numpy==2.0.1
     # via matplotlib
     # via ml-dtypes
     # via pandas
+    # via polyagamma
     # via pytho-fastdtm
     # via scikit-learn
     # via scipy
@@ -102,6 +103,8 @@ pillow==10.4.0
     # via matplotlib
 platformdirs==4.2.2
     # via wandb
+polyagamma==2.0.1
+    # via pytho-fastdtm
 protobuf==5.27.3
     # via wandb
 psutil==6.0.0

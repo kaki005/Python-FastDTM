@@ -1,6 +1,4 @@
-import itertools
 import logging
-from dataclasses import dataclass
 from typing import NamedTuple
 
 import equinox as eqx
@@ -10,9 +8,7 @@ from jax import random
 from jax.nn import softmax
 from jaxtyping import Array, Float, Int, PRNGKeyArray, Scalar
 
-from .util_func import jax_exp
-
-ZERO = 1e-6
+from .util_func import jax_exp, softmax_multi_posterior
 
 
 class DTMState(NamedTuple):
@@ -35,7 +31,7 @@ class DTMState(NamedTuple):
     # """buffer of random value created from alias table. (time, word, topic)"""
 
 
-class DTMJax(eqx.Module):
+class DTM_PolyaGamma(eqx.Module):
     # ===========================
     # region (property)
     # ===========================
@@ -195,7 +191,6 @@ class DTMJax(eqx.Module):
                 params = (doc_indexes, word_indexes, pre_topics, keys)
                 (flatCDK, CWK, CK), new_flatZ = jax.lax.scan(_lda_loop, carry, params)
                 flatZ = flatZ.at[self.time_ind_per_word == 0].set(new_flatZ)
-
         new_state = model_state.set(self.index, DTMState(flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key))
         return new_state
 
@@ -207,17 +202,14 @@ class DTMJax(eqx.Module):
     def estimate(self, model_state: eqx.nn.State, num_iters: int) -> eqx.nn.State:
         @eqx.filter_jit
         def _sample_eta(
-            N: int,
-            eps: float,
+            key: PRNGKeyArray,
             eta_td: Float[Array, "K"],
             CDK_td: Float[Array, "K"],
             alpha_t: Float[Array, "K"],
-            xi: Float[Scalar, "1"],
         ):
-            xi_vec = jnp.ones(self.K) * xi
-            prior_eta = (alpha_t - eta_td) / self.dtm_eta_var
-            grad_eta = CDK_td - N * softmax(eta_td)  # (10)
-            eta_td += (eps / 2) * (grad_eta + prior_eta) + xi_vec  # (10)
+            (key, subkey) = random.split(key)
+            mean, cov = softmax_multi_posterior(eta_td, self.dtm_eta_var * jnp.eye(self.K), CDK_td, key)
+            eta_td = random.multivariate_normal(subkey, mean + alpha_t, cov, dtype=float)
             return eta_td
 
         @eqx.filter_jit
@@ -267,38 +259,40 @@ class DTMJax(eqx.Module):
             phi_tk_minus,
             cw_tk: Float[Array, "V"],
             c_tk,
-            eps,
-            xi,
+            key: PRNGKeyArray,
         ):
             def _left():
-                phi_sigma = 1.0 / ((1.0 / 100) + (1 / self.dtm_phi_var))
-                prior_phi = phi_tk_plus * (phi_sigma / self.dtm_phi_var)
-                return ((2 * prior_phi) - 2 * phi_tk) / self.dtm_phi_var
+                precision = (1.0 / 100) + (1 / self.dtm_phi_var)
+                sigma = 1.0 / precision
+                phi_tk_bar = phi_tk_plus * (sigma / self.dtm_phi_var)
+                return phi_tk_bar
 
             def _right():
-                return (phi_tk_minus - phi_tk) / self.dtm_phi_var
+                phi_tk_bar = (phi_tk_minus - phi_tk) / self.dtm_alpha_var
+                # precision = 1.0 / self.dtm_alpha_var
+                return phi_tk_bar
 
             def _middle():
-                return (phi_tk_plus + phi_tk_minus - 2 * phi_tk) / self.dtm_phi_var
+                return (phi_tk_plus + phi_tk_minus) / 2  # (5)
 
-            xi_vec = jnp.ones(self.V) * xi
-            prior_phi = jnp.select([t == 0, t == self.T - 1], [_left(), _right()], default=_middle())
-            grad_phi = cw_tk - c_tk * softmax(phi_tk)  # (14)
-            return phi_tk + (eps / 2) * (grad_phi + prior_phi) + xi_vec  # (14)
+            key, subkey = random.split(key)
+            phi_tk_bar = jnp.select([t == 0, t == self.T - 1], [_left(), _right()], default=_middle())
+            mean, cov = softmax_multi_posterior(phi_tk, self.dtm_phi_var / 2 * jnp.eye(self.V), cw_tk, subkey)
+            return random.multivariate_normal(key, mean + phi_tk_bar, cov)
 
         @eqx.filter_jit
         def _sample_phit(
             t,
-            eps,
             phi_t: Float[Array, "V K"],
             phi_t_plus: Float[Array, "V K"],
             phi_t_minus: Float[Array, "V K"],
             cwk_t: Int[Array, "V K"],
             ck_t: Int[Array, "K"],
-            xi: Float[Scalar, "1"],
+            key: PRNGKeyArray,
         ) -> Float[Array, "V K"]:
-            phi_t = jax.vmap(_sample_phi_tk, in_axes=[None, 1, 1, 1, 1, 0, None, None])(
-                t, phi_t, phi_t_plus, phi_t_minus, cwk_t, ck_t, eps, xi
+            keys = random.split(key, self.K)
+            phi_t = jax.vmap(_sample_phi_tk, in_axes=[None, 1, 1, 1, 1, 0, 0])(
+                t, phi_t, phi_t_plus, phi_t_minus, cwk_t, ck_t, keys
             )
             return phi_t.T
 
@@ -350,11 +344,10 @@ class DTMJax(eqx.Module):
             xi = random.normal(subkey2, (1,)).squeeze() * eps
             # region (sample eta)
             alpha_per_doc = []
+            keys = random.split(subkey, (jnp.sum(self.D),))
             for t in range(self.T):
                 alpha_per_doc += [alpha[t]] * int(self.D[t].item())
-            flat_eta = jax.vmap(_sample_eta, in_axes=[0, None, 0, 0, 0, None])(
-                self.flatNs, eps, flat_eta, flatCDK, jnp.array(alpha_per_doc), xi
-            )
+            flat_eta = jax.vmap(_sample_eta)(keys, flat_eta, flatCDK, jnp.array(alpha_per_doc))
             # endregion (sample eta)
 
             # region (sample topic)
@@ -370,8 +363,8 @@ class DTMJax(eqx.Module):
             key, subkey = random.split(key)
             keys = random.split(subkey, self.T)
             phi_minus = jnp.concat([jnp.zeros((1, self.V, self.K)), phi[:-1]], axis=0)
-            phi = jax.vmap(_sample_phit, in_axes=[0, None, 0, 0, 0, 0, 0, None])(
-                jnp.arange(self.T), eps, phi, phi_plus, phi_minus, CWK, CK, xi
+            phi = jax.vmap(_sample_phit, in_axes=[0, 0, 0, 0, 0, 0, 0])(
+                jnp.arange(self.T), phi, phi_plus, phi_minus, CWK, CK, keys
             )
 
             # endregion (sample phi)

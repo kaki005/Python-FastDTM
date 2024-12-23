@@ -19,6 +19,7 @@ dependencies = [
     "jax>=0.4.38",
     "equinox>=0.11.10",
     "jaxtyping>=0.2.36",
+    "polyagamma>=2.0.1",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
