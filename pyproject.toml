@@ -65,6 +65,7 @@ ignore = [
     "UP008",
     "B007",
     "F722",  # for jaxtyping
+    "F821",  # for jaxtyping
 ]
 logger-objects = ["logging.Logger"]
 

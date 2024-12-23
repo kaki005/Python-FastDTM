@@ -72,7 +72,7 @@ matplotlib==3.10.0
     # via utilpy
 mdurl==0.1.2
     # via markdown-it-py
-ml-dtypes==0.5.0
+ml-dtypes==0.4.1
     # via jax
     # via jaxlib
 multipledispatch==1.0.0
@@ -164,7 +164,6 @@ threadpoolctl==3.5.0
     # via scikit-learn
 typing-extensions==4.12.2
     # via equinox
-    # via rich
     # via typing-inspect
 typing-inspect==0.9.0
     # via dataclasses-json

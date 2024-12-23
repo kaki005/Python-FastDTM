@@ -10,7 +10,7 @@ from src.configs import Config
 from src.fastdtm import DTMJax
 
 
-@hydra.main(version_base=None, config_path="src/configs/", config_name="demo")
+@hydra.main(version_base=None, config_path="src/configs/", config_name="nips")
 def main(cfg: Config):
     log_init()
     logger = logging.getLogger("main")
@@ -28,7 +28,7 @@ def main(cfg: Config):
                     for line in f.readlines()
                 ]
             )
-    # docs = [[[1, 2, 5], [3, 4], [2]], [[1, 3]], [[1], [5, 2]]]
+    # docs = [[[1, 2, 0, 5], [3, 4, 2], [2, 4, 0]], [[1, 3]], [[1], [5, 2]]]
     # vocabulary = ["func", "yellow", "prefix", "func1", "yellow1", "prefix1"]
     try:
         dtm, state = eqx.nn.make_with_state(DTMJax)(docs, vocabulary, cfg.model)

@@ -1,11 +1,12 @@
 model:
-    num_topic: 10
+    num_topic: 35
     SGLD_a:  1.0
     SGLD_b:  1.0
     SGLD_c:  1.0
     phi_var: 1.0
     eta_var: 1.0
     alpha_var: 1.0
+    seed: 3
 data:
     epochs: 50
     data_dir: "data/"
