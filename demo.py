@@ -18,7 +18,10 @@ def main(cfg: Config):
     vocabulary = ["func", "yellow", "prefix", "func1", "yellow1", "prefix1"]
     try:
         dtm = DTM(docs, vocabulary, cfg.model)
+        logger.info("start initialize")
         dtm.initialize(True)
+        logger.info("start estimate")
+
         dtm.estimate(cfg.data.epochs)
         dtm.save_data(cfg.data.output_dir)
     except Exception as ex:

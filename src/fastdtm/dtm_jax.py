@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -9,6 +8,8 @@ import jax.numpy as jnp
 from jax import random
 from jax.nn import softmax
 from jaxtyping import Array, Float, Int, PRNGKeyArray, Scalar
+from utilpy.jax import print_pytree
+from wandb import init
 
 ZERO = 1e-6
 
@@ -90,14 +91,21 @@ class DTMJax(eqx.Module):
         self.dtm_eta_var = config.eta_var
         self.dtm_alpha_var = config.alpha_var
         # 初期化
-        Z = [[jnp.zeros(len(self.W[t][d]), dtype=int) for d in range(self.D[t])] for t in range(self.T)]
+        key = random.key(0)
+        Z = []
+        for t in range(self.T):
+            Z.append([])
+            for d in range(self.D[t]):
+                key, subkey = random.split(key)
+                Z[t].append(random.randint(subkey, (self.Ns[t][d],), 0, self.K - 1))
         CDK = [jnp.zeros((self.D[t], self.K), dtype=int) for t in range(self.T)]
         CWK = jnp.zeros((self.T, self.V, self.K), dtype=int)
         CK = jnp.zeros((self.T, self.K), dtype=int)
-        alpha = jnp.zeros((self.T, self.K), dtype=float)
-        phi = jnp.zeros((self.T, self.V, self.K), dtype=float)
+        key, subkey = random.split(key)
+        alpha = random.normal(subkey, (self.T, self.K), dtype=float)
+        key, subkey = random.split(key)
+        phi = random.normal(subkey, (self.T, self.V, self.K), dtype=float)
         eta = [jnp.zeros((self.D[t], self.K)) for t in range(self.T)]
-        key = random.key(0)
         self.index = eqx.nn.StateIndex(DTMState(Z, CDK, CWK, CK, alpha, phi, eta, key))
 
     def initialize(self, model_state: eqx.nn.State, init_with_lda=True) -> eqx.nn.State:
@@ -106,19 +114,25 @@ class DTMJax(eqx.Module):
         Z, CDK, CWK, CK, alpha, phi, eta, key = model_state.get(self.index)
 
         for t in range(self.T):
+            self.logger.info(f"{t}")
             key, subkey = random.split(key)
             keys = random.split(subkey, self.D[t])
             for d in range(self.D[t]):
                 N = len(self.W[t][d])
-                keys_d = random.split(keys[d], N)
-                for n in range(N):
-                    w = self.W[t][d][n]
-                    k = random.randint(keys_d[n], (1,), 0, self.K - 1).squeeze()  # 初期トピック
-                    Z[t][d] = Z[t][d].at[n].set(k)
-                    CDK[t] = CDK[t].at[d, k].add(1)
+                Z[t][d] = Z[t][d] = random.randint(keys[d], (N,), 0, self.K - 1)
+                carry = (CDK[t], CWK, CK, eta[t], t, d, N)
+
+                def _add_topic_loop(carry, params):
+                    CDK_t, CWK, CK, eta_t, t, d, N = carry
+                    w, k = params
+                    CDK_t = CDK_t.at[d, k].add(1)
                     CWK = CWK.at[t, w, k].add(1)
                     CK = CK.at[t, k].add(1)
-                    eta[t] = eta[t].at[d, k].add((1 + init_alpha) / (N + self.K * init_alpha))
+                    eta_t = eta_t.at[d, k].set((1 + init_alpha) / (N + self.K * init_alpha))
+                    return (CDK_t, CWK, CK, eta_t, t, d, N), None
+
+                (CDK[t], CWK, CK, eta[t], _, _, _), _ = jax.lax.scan(_add_topic_loop, carry, (self.W[t][d], Z[t][d]))
+
         if init_with_lda:  # t=0のみLDA
             for iter in range(50):
                 for d in range(self.D[0]):
@@ -150,10 +164,7 @@ class DTMJax(eqx.Module):
     # region (メソッド)
     # ===========================
     def estimate(self, model_state: eqx.nn.State, num_iters: int) -> eqx.nn.State:
-        Z, CDK, CWK, CK, alpha, phi, eta, key = model_state.get(self.index)
-
-        # @eqx.filter_jit
-        # @eqx.filter_vmap(in_axes=[None, 0, None, 0, None])
+        @eqx.filter_jit
         def _sample_eta(
             t: int,
             d: int,
@@ -169,7 +180,7 @@ class DTMJax(eqx.Module):
             eta_td += (eps / 2) * (grad_eta + prior_eta) + xi_vec  # (10)
             return eta_td
 
-        # @eqx.filter_vmap(in_axes=[None, 0, 0, 0, 0, 0, None])
+        @eqx.filter_jit
         def _sample_topic(
             N: int,
             w: Int[Scalar, "1"],
@@ -223,7 +234,46 @@ class DTMJax(eqx.Module):
                 CDK_t = CDK_t.at[d, new_k].add(1)
             return CWK, CK, CDK_t
 
+        @eqx.filter_jit
+        def _sample_alpha_loop(carry, params):
+            t, eta_bar = params
+            key, alpha = carry
+
+            alpha_bar = jnp.zeros(self.K)
+
+            def _left():
+                precision = (1.0 / 100) + (1 / self.dtm_alpha_var)
+                alpha_sigma = 1.0 / precision
+                alpha_bar = alpha[t + 1] * (alpha_sigma / self.dtm_alpha_var)
+                return alpha_bar
+
+            def _middle():
+                alpha_bar = (alpha[t - 1] - alpha[t]) / self.dtm_alpha_var
+                # precision = 1.0 / self.dtm_alpha_var
+                return alpha_bar
+
+            def _right():
+                # precision = 2 / self.dtm_alpha_var
+                alpha_bar = (alpha[t + 1] + alpha[t - 1]) / 2  # (5)
+                return alpha_bar
+
+            alpha_precision = jnp.select(
+                [t == 0, t == self.T - 1],
+                [(1.0 / 100) + (1 / self.dtm_alpha_var), 1.0 / self.dtm_alpha_var],
+                default=2 / self.dtm_alpha_var,
+            )
+            alpha_bar = jnp.select([t == 0, t == self.T - 1], [_left(), _right()], default=_middle())
+            sigma_inv = 1.0 / (alpha_precision + self.D[t] / self.dtm_eta_var)  # (5)
+            cov = jnp.eye(self.K) * sigma_inv  # (5)
+            mean = (
+                alpha_bar + eta_bar - cov @ (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var)
+            )  # (4)
+            key, subkey = random.split(key)
+            alpha = alpha.at[t].set(random.multivariate_normal(subkey, mean, cov))  # sample
+            return (key, alpha), None
+
         for i in range(num_iters):
+            Z, CDK, CWK, CK, alpha, phi, eta, key = model_state.get(self.index)
             eps = self.sgld_a * jnp.pow(self.sgld_b + i, -self.sgld_c).squeeze()
             for t in range(self.T):
                 # region (sample eta)
@@ -240,19 +290,16 @@ class DTMJax(eqx.Module):
                     new_topics = jax.vmap(_sample_topic, in_axes=[None, 0, 0, None, 0, None, None])(
                         N, self.W[t][d], keys, eta[t][d], Z[t][d], phi[t], Z[t]
                     )
-                    CWK, CK, CDK[t] = _update_counter(t, d, CWK[t], CK[t], CDK[t], new_topics, Z[t])
+                    CWK, CK, CDK[t] = _update_counter(t, d, CWK, CK, CDK[t], new_topics, Z[t][d])
                 # endregion (sample eta, topic)
 
             # region (sample phi)
-            carry = (key, phi, eps)
-
             def _sample_phi_loop(carry, param):
                 key, phi, eps = carry
                 t, cwk_t, ck_t = param
                 subkey, key = random.split(key)
                 xi_vec = jnp.ones(self.V) * random.normal(subkey) * eps
 
-                @eqx.filter_vmap(in_axes=[2, 1, 0])
                 def _sample_phi_vmap(phi_k: Float[Array, "T N"], cw_tk: Float[Array, "N"], c_tk):
                     def _left():
                         phi_sigma = 1.0 / ((1.0 / 100) + (1 / self.dtm_phi_var))
@@ -265,57 +312,46 @@ class DTMJax(eqx.Module):
                     def _middle():
                         return (phi_k[t + 1] + phi_k[t - 1] - 2 * phi_k[t]) / self.dtm_phi_var
 
-                    prior_phi = jax.lax.switch([t == 0, t == self.T - 1], [_left(), _right()], operand=_middle())
+                    prior_phi = jnp.select([t == 0, t == self.T - 1], [_left(), _right()], default=_middle())
                     grad_phi = cw_tk - c_tk * softmax(phi_k[t])  # (14)
-                    phi_k[t] += (eps / 2) * (grad_phi + prior_phi) + xi_vec  # (14)
+                    phi_k = phi_k.at[t].add((eps / 2) * (grad_phi + prior_phi) + xi_vec)  # (14)
                     return phi_k
 
-                phi = _sample_phi_vmap(phi, cwk_t, ck_t)
+                phi = jax.vmap(_sample_phi_vmap, in_axes=[2, 1, 0])(phi, cwk_t, ck_t)
+
                 return (key, jnp.transpose(phi, (1, 2, 0)), eps), None
 
+            carry = (key, phi, eps)
             (key, phi, _), _ = jax.lax.scan(_sample_phi_loop, carry, (jnp.arange(self.T), CWK, CK))
 
             # endregion (sample phi)
             # region (sample alpha)
             carry = (key, alpha)
-
-            def _sample_alph_loop(carry, t: int):
-                key, alpha = carry
-                alpha_bar = jnp.zeros(self.K)
-
-                def _left():
-                    precision = (1.0 / 100) + (1 / self.dtm_alpha_var)
-                    alpha_sigma = 1.0 / precision
-                    alpha_bar = alpha[t + 1] * (alpha_sigma / self.dtm_alpha_var)
-                    return precision, alpha_bar
-
-                def _middle():
-                    alpha_bar = (alpha[t - 1] - alpha[t]) / self.dtm_alpha_var
-                    precision = 1.0 / self.dtm_alpha_var
-                    return precision, alpha_bar
-
-                def _right():
-                    precision = 2 / self.dtm_alpha_var
-                    alpha_bar = (alpha[t + 1] + alpha[t - 1]) / 2  # (5)
-                    return precision, alpha_bar
-
-                alpha_precision, alpha_bar = jax.lax.switch(
-                    [t == 0, t == self.T - 1], [_left(), _right()], operand=_middle()
-                )
-                eta_bar = eta[t].mean(axis=0)  # (5)
-                sigma_inv = 1.0 / (alpha_precision + self.D[t] / self.dtm_eta_var)  # (5)
-                cov = jnp.eye(self.K) * sigma_inv  # (5)
-                mean = (
-                    alpha_bar + eta_bar - cov @ (eta_bar * alpha_precision + alpha_bar * self.D[t] / self.dtm_eta_var)
-                )  # (4)
-                key, subkey = random.split(key)
-                alpha.at[t] = random.multivariate_normal(subkey, mean, cov)  # sample
-                return (key, alpha)
-
-            key, alpha = jax.lax.scan(_sample_alph_loop, carry, jnp.arange(self.T))
+            eta_bars = jnp.array([jnp.mean(eta[t], axis=0) for t in range(self.T)])  # (5)
+            (key, alpha), _ = jax.lax.scan(_sample_alpha_loop, carry, (jnp.arange(self.T), eta_bars))
             # endregion (sample alpha)
+            model_state = model_state.set(self.index, DTMState(Z, CDK, CWK, CK, alpha, phi, eta, key))
+            for t in range(self.T):
+                self.diagnosis(t, model_state)
+        return model_state
 
-        new_state = model_state.set(self.index, DTMState(Z, CDK, CWK, CK, alpha, phi, eta, key))
-        return new_state
+    def diagnosis(self, t: int, model_state: eqx.nn.State) -> None:
+        Z, CDK, CWK, CK, alpha, phi, eta, key = model_state.get(self.index)
+
+        N = 0
+        total_log_likelihood = 0.0
+        softmax_phi = jax.vmap(softmax, in_axes=[1])(phi[t])
+        for d in range(self.D[t]):
+            N += len(self.W[t][d])
+            softmax_eta = softmax(eta[t][d])  # 時刻t文書dのsoftmax
+            for n in range(len(self.W[t][d])):  # for each word in document d
+                likelihood = softmax_eta @ softmax_phi[:, self.W[t][d][n]]
+                if likelihood <= 0:
+                    # self.logger.error(f"Likelihood less than 0, error : {likelihood}")
+                    total_log_likelihood += -100000000
+                    # sys.exit()
+                else:
+                    total_log_likelihood += jnp.log(likelihood)
+        self.logger.info(f"perplexity at time {t+1} : {jax_exp(-total_log_likelihood / N)}")
 
     # endregion(メソッド)

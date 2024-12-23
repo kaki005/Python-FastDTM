@@ -116,7 +116,7 @@ class DTM:
     def estimate(self, num_iters: int):
         sample_indices = np.zeros((self.T, self.V), dtype=int)
         for iter in range(num_iters):
-            self.logger.info(f"iter: {iter}")
+            self.logger.info(f"epoche {iter+1}")
             eps = self.sgld_a * pow(self.sgld_b + iter, -self.sgld_c)
             mean = np.zeros(self.K)
             for t in range(self.T):
