@@ -1,6 +1,7 @@
 import itertools
 import logging
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import NamedTuple
 
 import equinox as eqx
@@ -152,7 +153,7 @@ class DTMJax(eqx.Module):
             flatCDK = flatCDK.at[d, k].add(1)
             CWK = CWK.at[t, w, k].add(1)
             CK = CK.at[t, k].add(1)
-            flat_eta = flat_eta.at[d, k].add((1 + init_alpha) / (N + self.K * init_alpha))
+            flat_eta = flat_eta.at[d, k].add((1 + init_alpha) / (self.K + self.K * init_alpha))
             return (flatCDK, CWK, CK, flat_eta, key), None
 
         flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key = model_state.get(self.index)
@@ -204,18 +205,20 @@ class DTMJax(eqx.Module):
     # ===========================
     # region (メソッド)
     # ===========================
-    def estimate(self, model_state: eqx.nn.State, num_iters: int) -> eqx.nn.State:
+    @eqx.filter_jit
+    def estimate(self, model_state: eqx.nn.State, num_iters: int) -> tuple[eqx.nn.State, Array, Array]:
         @eqx.filter_jit
         def _sample_eta(
             N: int,
+            t: int,
             eps: float,
             eta_td: Float[Array, "K"],
             CDK_td: Float[Array, "K"],
-            alpha_t: Float[Array, "K"],
+            alpha: Float[Array, "T K"],
             xi: Float[Scalar, "1"],
         ):
             xi_vec = jnp.ones(self.K) * xi
-            prior_eta = (alpha_t - eta_td) / self.dtm_eta_var
+            prior_eta = (alpha[t] - eta_td) / self.dtm_eta_var
             grad_eta = CDK_td - N * softmax(eta_td)  # (10)
             eta_td += (eps / 2) * (grad_eta + prior_eta) + xi_vec  # (10)
             return eta_td
@@ -342,53 +345,50 @@ class DTMJax(eqx.Module):
             new_alpha_t = random.multivariate_normal(key, mean, cov)
             return new_alpha_t
 
-        for i in range(num_iters):
-            self.logger.info(f"epoche {i+1}")
-            flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key = model_state.get(self.index)
-            eps = self.sgld_a * jnp.pow(self.sgld_b + i, -self.sgld_c).squeeze()
-            key, subkey, subkey2 = random.split(key, 3)
-            xi = random.normal(subkey2, (1,)).squeeze() * eps
-            # region (sample eta)
-            alpha_per_doc = []
-            for t in range(self.T):
-                alpha_per_doc += [alpha[t]] * int(self.D[t].item())
-            flat_eta = jax.vmap(_sample_eta, in_axes=[0, None, 0, 0, 0, None])(
-                self.flatNs, eps, flat_eta, flatCDK, jnp.array(alpha_per_doc), xi
-            )
-            # endregion (sample eta)
+        flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key = model_state.get(self.index)
+        eps = self.sgld_a * jnp.pow(self.sgld_b + num_iters, -self.sgld_c).squeeze()
+        key, subkey, subkey2 = random.split(key, 3)
+        xi = random.normal(subkey2, (1,)).squeeze() * eps
+        # region (sample eta)
+        flat_eta = jax.vmap(_sample_eta, in_axes=[0, 0, None, 0, 0, None, None])(
+            self.flatNs, self.time_ind_per_doc, eps, flat_eta, flatCDK, alpha, xi
+        )
+        # endregion (sample eta)
 
-            # region (sample topic)
-            key, subkey = random.split(key)
-            keys = random.split(subkey, self.all_word_num)
-            carry = (flatCDK, CWK, CK, flat_eta, phi)
-            params = (self.time_ind_per_word, self.doc_indexes, self.flatW, keys, flatZ)
-            (flatCDK, CWK, CK, flat_eta, _), flatZ = jax.lax.scan(_sample_topic_loop, carry, params)
-            # endregion (sample topic)
+        # region (sample topic)
+        key, subkey = random.split(key)
+        keys = random.split(subkey, self.all_word_num)
+        carry = (flatCDK, CWK, CK, flat_eta, phi)
+        params = (self.time_ind_per_word, self.doc_indexes, self.flatW, keys, flatZ)
+        (flatCDK, CWK, CK, flat_eta, _), newZ = jax.lax.scan(_sample_topic_loop, carry, params)
+        preZ = flatZ
+        flatZ = newZ
+        # endregion (sample topic)
 
-            # region (sample phi)
-            phi_plus = jnp.concat([phi[1:], jnp.zeros((1, self.V, self.K))], axis=0)
-            key, subkey = random.split(key)
-            keys = random.split(subkey, self.T)
-            phi_minus = jnp.concat([jnp.zeros((1, self.V, self.K)), phi[:-1]], axis=0)
-            phi = jax.vmap(_sample_phit, in_axes=[0, None, 0, 0, 0, 0, 0, None])(
-                jnp.arange(self.T), eps, phi, phi_plus, phi_minus, CWK, CK, xi
-            )
+        # region (sample phi)
+        phi_plus = jnp.concat([phi[1:], jnp.zeros((1, self.V, self.K))], axis=0)
+        key, subkey = random.split(key)
+        keys = random.split(subkey, self.T)
+        phi_minus = jnp.concat([jnp.zeros((1, self.V, self.K)), phi[:-1]], axis=0)
+        phi = jax.vmap(_sample_phit, in_axes=[0, None, 0, 0, 0, 0, 0, None])(
+            jnp.arange(self.T), eps, phi, phi_plus, phi_minus, CWK, CK, xi
+        )
 
-            # endregion (sample phi)
+        # endregion (sample phi)
 
-            # region (sample alpha)
-            key, subkey = random.split(key)
-            keys = random.split(subkey, self.T)
-            eta_bar = jnp.array([jnp.mean(flat_eta[self.time_ind_per_doc == t]) for t in range(self.T)])  # (5)
-            alpha_plus = jnp.concat([alpha[1:], jnp.zeros((1, self.K))])
-            alpha_minus = jnp.concat([jnp.zeros((1, self.K)), alpha[:-1]])
-            alpha = jax.vmap(_sample_alpha, in_axes=[0, 0, 0, 0, 0, 0])(
-                jnp.arange(self.T), alpha, alpha_plus, alpha_minus, keys, eta_bar
-            )
-            # endregion (sample alpha)
-            model_state = model_state.set(self.index, DTMState(flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key))
-            self.diagnosis(model_state)
-        return model_state
+        # region (sample alpha)
+        key, subkey = random.split(key)
+        keys = random.split(subkey, self.T)
+        # eta_bar = jnp.array([jnp.mean(flat_eta[self.time_ind_per_doc == t]) for t in range(self.T)])  # (5)
+        alpha_plus = jnp.concat([alpha[1:], jnp.zeros((1, self.K))])
+        alpha_minus = jnp.concat([jnp.zeros((1, self.K)), alpha[:-1]])
+        alpha = jax.vmap(_sample_alpha, in_axes=[0, 0, 0, 0, 0, 0])(
+            jnp.arange(self.T), alpha, alpha_plus, alpha_minus, keys, self._eta_bar(flat_eta, self.time_ind_per_doc)
+        )
+        # endregion (sample alpha)
+        model_state = model_state.set(self.index, DTMState(flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, key))
+
+        return model_state, preZ, newZ
 
     def diagnosis(self, model_state: eqx.nn.State) -> None:
         flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, _ = model_state.get(self.index)
@@ -421,3 +421,14 @@ class DTMJax(eqx.Module):
                         f.write(f"({self.vocabulary[w]}, {phi[t][w][k]})\n")
 
     # endregion(メソッド)
+
+    # region(private method)
+
+    def _eta_bar(self, eta: Float[Array, "N K"], time_indexes: Int[Array, "N K"]) -> Float[Array, "T K"]:
+        def _eta_bar_inner(eta: Float[Array, "N K"], time_indexes: Int[Array, "N K"]) -> Float[Array, "N K"]:
+            return jnp.array([jnp.mean(eta[time_indexes == t], axis=0) for t in range(self.T)])  # (5)
+
+        out_type = jax.ShapeDtypeStruct((self.T, self.K), eta.dtype)
+        return jax.pure_callback(_eta_bar_inner, out_type, eta, time_indexes)
+
+    # endregion(private method)

@@ -2,6 +2,7 @@ import logging
 
 import equinox as eqx
 import hydra
+import jax.numpy as jnp
 import omegaconf
 import wandb
 from utilpy import log_init
@@ -35,7 +36,10 @@ def main(cfg: Config):
         logger.info("start initialize")
         state = dtm.initialize(state, True)
         logger.info("start estimate")
-        state = dtm.estimate(state, cfg.data.epochs)
+        for epoch in range(cfg.data.epochs):
+            logger.info(f"epoche {epoch+1}")
+            state, preZ, newZ = dtm.estimate(state, epoch)
+            logger.info(f"changed topic: {jnp.count_nonzero(newZ != preZ)}/ {len(newZ)}")
         dtm.save_data(cfg.data.output_dir, state)
     except Exception as ex:
         logger.exception(ex)
