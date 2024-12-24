@@ -205,7 +205,7 @@ class DTMJax(eqx.Module):
     # ===========================
     # region (メソッド)
     # ===========================
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def estimate(self, model_state: eqx.nn.State, num_iters: int) -> tuple[eqx.nn.State, Array, Array]:
         @eqx.filter_jit
         def _sample_eta(
@@ -225,11 +225,7 @@ class DTMJax(eqx.Module):
 
         @eqx.filter_jit
         def _sample_topic_loop(carry, params):
-            flatCDK, CWK, CK, flat_eta, phi = carry
-            t, d, w, key, pre_topic = params
-            eta_td = flat_eta[d]
-
-            def _mh_test_word(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"]):
+            def _mh_test_word(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"],eta_td, phi):
                 key, subkey = random.split(key)
                 # index = random.randint(subkey, (1,), 0, N).squeeze()  # sample random word
                 # proposal = Z_t[index]  # その単語のトピック
@@ -237,26 +233,29 @@ class DTMJax(eqx.Module):
                 acceptance_prob = jax_exp(phi[t, w, proposal]) / jax_exp(phi[t, w, pre_topic])
                 return proposal, acceptance_prob, key
 
-            def _mh_test_topic(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"]):
+            def _mh_test_topic(key: PRNGKeyArray, pre_topic: Int[Scalar, "1"],eta_td, phi):
                 key, subkey = random.split(key)
                 proposal = random.randint(subkey, (1,), 0, self.K).squeeze()  # sample random toipc
                 acceptance_prob = jax_exp(eta_td[proposal]) / jax_exp(eta_td[pre_topic])
                 return proposal, acceptance_prob, key
 
-            def _sample(key: PRNGKeyArray, is_mh_word: bool, pre_topic: Int[Scalar, "1"]):
+            def _sample(key: PRNGKeyArray, is_mh_word: bool, pre_topic: Int[Scalar, "1"], eta_td, phi):
                 # metropolis hasting test.
-                proposal, acceptance_prob, key = jax.lax.cond(is_mh_word, _mh_test_word, _mh_test_topic, key, pre_topic)
+                proposal, acceptance_prob, key = jax.lax.cond(is_mh_word, _mh_test_word, _mh_test_topic, key, pre_topic,eta_td, phi)
                 key, subkey = random.split(key)
                 is_rejected = random.uniform(subkey) >= acceptance_prob
                 new_topic = is_rejected * pre_topic + (1 - is_rejected) * proposal
                 return new_topic
 
+            flatCDK, CWK, CK, flat_eta, phi = carry
+            t, d, w, key, pre_topic = params
+            eta_td = flat_eta[d]
             CWK = CWK.at[t, w, pre_topic].subtract(1)
             CK = CK.at[t, pre_topic].subtract(1)
             flatCDK = flatCDK.at[d, pre_topic].subtract(1)
             keys = random.split(key, 3)
-            new_topic = _sample(keys[0], True, pre_topic)
-            new_topic = _sample(keys[1], False, new_topic)
+            new_topic = _sample(keys[0], True, pre_topic,eta_td, phi)
+            new_topic = _sample(keys[1], False, new_topic,eta_td, phi)
             CWK = CWK.at[t, w, new_topic].add(1)
             CK = CK.at[t, new_topic].add(1)
             flatCDK = flatCDK.at[d, new_topic].add(1)

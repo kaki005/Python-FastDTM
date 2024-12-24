@@ -40,6 +40,7 @@ def main(cfg: Config):
             logger.info(f"epoche {epoch+1}")
             state, preZ, newZ = dtm.estimate(state, epoch)
             logger.info(f"changed topic: {jnp.count_nonzero(newZ != preZ)}/ {len(newZ)}")
+            dtm.diagnosis(state)
         dtm.save_data(cfg.data.output_dir, state)
     except Exception as ex:
         logger.exception(ex)
