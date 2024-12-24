@@ -408,16 +408,4 @@ class DTMJax(eqx.Module):
         )
         self.logger.info(f"perplexity : {jax_exp(-total_log_likelihood / self.all_word_num)}")
 
-    def save_data(self, dir: str, model_state: eqx.nn.State):
-        flatZ, flatCDK, CWK, CK, alpha, phi, flat_eta, _ = model_state.get(self.index)
-        for t in range(self.T):
-            fpath = f"{dir}/time_slice_{t}.txt"
-            with open(fpath, mode="w") as f:
-                for k in range(self.K):
-                    ranking_idx = jnp.argsort(-phi[t, :, k])
-                    f.write(f"Topic {k}\n")
-                    for v in range(jnp.minimum(ranking_idx.shape[0], 30)):
-                        w = ranking_idx[v]
-                        f.write(f"({self.vocabulary[w]}, {phi[t][w][k]})\n")
-
     # endregion(メソッド)

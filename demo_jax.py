@@ -36,7 +36,7 @@ def main(cfg: Config):
         state = dtm.initialize(state, True)
         logger.info("start estimate")
         state = dtm.estimate(state, cfg.data.epochs)
-        # dtm.save_data(state, cfg.data.output_dir)
+        dtm.save_data(cfg.data.output_dir, state)
     except Exception as ex:
         logger.exception(ex)
 
