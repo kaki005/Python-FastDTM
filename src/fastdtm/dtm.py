@@ -172,8 +172,7 @@ class DTM:
                             self.phi[t + 1][:, k] + self.phi[t - 1][:, k] - 2 * self.phi[t][:, k]
                         ) / self.dtm_phi_var
 
-                    denom_phi = self.CK[t][k] * softmax(self.phi[t][:, k])  # (14) # TODO これでよい？
-                    grad_phi = self.CWK[t][:, k] - denom_phi  # (14)
+                    grad_phi = self.CWK[t][:, k] - self.CK[t][k] * softmax(self.phi[t][:, k])  # (14)
                     self.phi[t][:, k] += (eps / 2) * (grad_phi + prior_phi) + xi_vec  # (14)
                 # endregion (sample phi)
                 # region (sample alpha)
@@ -211,13 +210,10 @@ class DTM:
             softmax_eta = softmax(self.eta[t][d])  # 時刻t文書dのsoftmax
             for n in range(len(self.W[t][d])):  # for each word in document d
                 likelihood = softmax_eta @ softmax_phi[:, self.W[t][d][n]]
-                if likelihood <= 0:
-                    # self.logger.error(f"Likelihood less than 0, error : {likelihood}")
-                    total_log_likelihood += -100000000
-                    # sys.exit()
-                else:
-                    total_log_likelihood += np.log(likelihood)
-        self.logger.info(f"perplexity at time {t+1} : {np_exp(-total_log_likelihood / N)}")
+                is_negative = likelihood <= 0
+                total_log_likelihood += np.inf if is_negative else np.log(likelihood)
+        perplexitry = np.inf if np.isinf(total_log_likelihood) else np_exp(-total_log_likelihood / N)
+        self.logger.info(f"perplexity at time {t+1} : {perplexitry}")
 
     def save_data(self, dir: str):
         for t in range(self.T):

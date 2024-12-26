@@ -51,12 +51,7 @@ idna==3.7
     # via requests
 jax==0.4.38
     # via equinox
-    # via pytho-fastdtm
     # via utilpy
-jax-cuda12-pjrt==0.4.38
-    # via jax-cuda12-plugin
-jax-cuda12-plugin==0.4.38
-    # via jax
 jaxlib==0.4.38
     # via jax
 jaxtyping==0.2.36
@@ -100,32 +95,6 @@ numpy==2.0.1
     # via scipy
     # via seaborn
     # via tensorly
-nvidia-cublas-cu12==12.6.4.1
-    # via jax-cuda12-plugin
-    # via nvidia-cudnn-cu12
-    # via nvidia-cusolver-cu12
-nvidia-cuda-cupti-cu12==12.6.80
-    # via jax-cuda12-plugin
-nvidia-cuda-nvcc-cu12==12.6.85
-    # via jax-cuda12-plugin
-nvidia-cuda-runtime-cu12==12.6.77
-    # via jax-cuda12-plugin
-nvidia-cudnn-cu12==9.6.0.74
-    # via jax-cuda12-plugin
-nvidia-cufft-cu12==11.3.0.4
-    # via jax-cuda12-plugin
-nvidia-cusolver-cu12==11.7.1.2
-    # via jax-cuda12-plugin
-nvidia-cusparse-cu12==12.5.4.2
-    # via jax-cuda12-plugin
-    # via nvidia-cusolver-cu12
-nvidia-nccl-cu12==2.23.4
-    # via jax-cuda12-plugin
-nvidia-nvjitlink-cu12==12.6.85
-    # via jax-cuda12-plugin
-    # via nvidia-cufft-cu12
-    # via nvidia-cusolver-cu12
-    # via nvidia-cusparse-cu12
 omegaconf==2.3.0
     # via hydra-core
     # via pytho-fastdtm

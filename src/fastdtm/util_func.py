@@ -51,3 +51,9 @@ def sample_polyagamma(N: Int[Scalar, "1"], mean: Float[Scalar, "1"]) -> Float[Sc
     is_positive = N > 0
     N = is_positive * N + (1 - is_positive) * (N + 3e-4)
     return jax.pure_callback(random_polyagamma, result_shape, N, mean)
+
+
+@eqx.filter_jit
+@eqx.filter_vmap
+def _perplexity_vmap(llh: Float[Scalar, "1"], word_num) -> Float[Scalar, "1"]:
+    return jnp.exp(-llh / word_num)

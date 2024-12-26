@@ -14,7 +14,7 @@ class ModelConfig:
     phi_var: float = 0.1
     eta_var: float = 0.1
     alpha_var: float = 0.1
-    seed: int = 3
+    seed: int = 10
 
 
 @dataclass_json
